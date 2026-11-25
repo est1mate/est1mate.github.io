@@ -1,0 +1,30 @@
+[
+  {
+    "slug": "themida-devirt",
+    "title": "Themida devirtualization and unpacking",
+    "date": "2026-11-24",
+    "description": "Walkthrough of devirtualizing the VM and unpacking a Themida-protected binary",
+    "tags": ["reverse-engineering", "themida", "devirtualization", "unpacking", "windows-internals"]
+  },
+   {
+    "slug": "vmp-devirt",
+    "title": "VMProtect 3.10.4 devirtualization and unpacking",
+    "date": "2026-11-24",
+    "description": "Walkthrough of devirtualizing the VM and unpacking a VMP-protected binary",
+    "tags": ["reverse-engineering", "VMProtect", "devirtualization", "unpacking", "windows-internals"]
+  },
+   {
+  "slug": "be-devirt",
+  "title": "BattlEye BEdaisy.sys devirtualization",
+  "date": "2026-11-27",
+  "description": "Walkthrough of devirtualizing the VM and analyzing BattlEye's BEdaisy.sys kernel driver",
+  "tags": ["reverse-engineering", "battleye", "devirtualization", "windows-internals"]
+},
+  {
+    "slug": "vgk",
+    "title": "Riot Vanguard (vgk.sys): packer, virtualizer and hook analysis",
+    "date": "2026-11-24",
+    "description": "Static and emulation-based analysis of vgk.sys: packer stub, Griffin VM, hooks and telemetry",
+    "tags": ["windows-internals", "kernel", "anti-cheat"]
+  }
+]

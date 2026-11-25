@@ -1,0 +1,483 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>est1mate | research</title>
+  <meta name="description" content="Reverse engineering and Windows internals by est1mate." />
+  <meta name="theme-color" content="#0b1a1d" />
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%230b1a1d'/%3E%3Crect x='8' y='8' width='16' height='16' rx='3' fill='%23ffb020'/%3E%3C/svg%3E" />
+
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400..800&family=JetBrains+Mono:wght@400;500&family=Newsreader:ital,opsz,wght@0,6..72,400..600;1,6..72,400..600&display=swap" rel="stylesheet" />
+
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div id="progress"></div>
+  <div class="wrapper">
+    <header class="topbar">
+      <a href="#" class="brand">est1mate</a>
+      <nav class="nav">
+        <a href="#">Posts</a>
+        <a href="https://github.com/est1mate" target="_blank" rel="noopener">GitHub</a>
+      </nav>
+    </header>
+
+    <main id="app"></main>
+
+    <footer class="footer">
+      <span>est1mate</span>
+      <a href="https://github.com/est1mate" target="_blank" rel="noopener">github.com/est1mate</a>
+    </footer>
+  </div>
+
+  <!-- Marked.js (GFM) & Highlight.js -->
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/x86asm.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/cpp.min.js"></script>
+
+  <script>
+    const app = document.getElementById('app');
+    const progress = document.getElementById('progress');
+    let postsCache = [];
+
+    marked.setOptions({ gfm: true, breaks: false });
+
+    let currentPostSlug = null;
+
+    const esc = s => String(s).replace(/[&<>"']/g, c => (
+      { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
+    ));
+
+    function slugify(text) {
+      return text
+        .toLowerCase()
+        .trim()
+        .replace(/<[^>]+>/g, '')
+        .replace(/[`*_~]/g, '')
+        .replace(/[^\w\s-]/g, '')
+        .replace(/\s/g, '-');
+    }
+
+    function enhanceHeadings() {
+      const headings = document.querySelectorAll('.md-content h1, .md-content h2, .md-content h3, .md-content h4, .md-content h5, .md-content h6');
+      const usedSlugs = new Set();
+
+      headings.forEach(h => {
+        let slug = slugify(h.textContent);
+        if (!slug) slug = 'heading';
+
+        if (usedSlugs.has(slug)) {
+          let i = 1;
+          while (usedSlugs.has(`${slug}-${i}`)) i++;
+          slug = `${slug}-${i}`;
+        }
+        usedSlugs.add(slug);
+        h.id = slug;
+      });
+    }
+
+    function enhanceTOC() {
+      const tocHeading = document.querySelector('.md-content #table-of-contents');
+      if (!tocHeading) return;
+
+      const nextEl = tocHeading.nextElementSibling;
+      if (nextEl && nextEl.tagName === 'UL') {
+        const wrapper = document.createElement('nav');
+        wrapper.className = 'toc-card';
+        wrapper.id = 'table-of-contents';
+        wrapper.setAttribute('aria-label', 'Table of Contents');
+
+        const header = document.createElement('div');
+        header.className = 'toc-header';
+        header.textContent = 'Table of Contents';
+
+        nextEl.classList.add('toc-list');
+
+        tocHeading.parentNode.insertBefore(wrapper, tocHeading);
+        wrapper.appendChild(header);
+        wrapper.appendChild(nextEl);
+        tocHeading.remove();
+      }
+    }
+
+    function enhanceLinks() {
+      document.querySelectorAll('.md-content a').forEach(a => {
+        const href = a.getAttribute('href');
+        if (href && (href.startsWith('http://') || href.startsWith('https://'))) {
+          a.setAttribute('target', '_blank');
+          a.setAttribute('rel', 'noopener noreferrer');
+        }
+      });
+    }
+
+    async function loadIndex() {
+      if (!postsCache.length) {
+        const res = await fetch('posts.json');
+        postsCache = await res.json();
+      }
+      return postsCache;
+    }
+
+    const tagLink = t => `<a class="tag" href="#tag=${encodeURIComponent(t)}">${esc(t)}</a>`;
+    const yearOf = d => (String(d).match(/\d{4}/) || ['Other'])[0];
+
+    async function renderHome(tag) {
+      document.title = tag ? `${tag} | est1mate` : 'est1mate | research';
+      progress.style.opacity = 0;
+
+      let posts = [...await loadIndex()].sort((a, b) => (Date.parse(b.date) || 0) - (Date.parse(a.date) || 0));
+      if (tag) posts = posts.filter(p => p.tags.includes(tag));
+
+      const groups = [];
+      posts.forEach(p => {
+        const y = yearOf(p.date);
+        let g = groups.find(x => x.year === y);
+        if (!g) groups.push(g = { year: y, items: [] });
+        g.items.push(p);
+      });
+
+      const list = groups.map(g => `
+        <section class="year-group">
+          <h2 class="year">${esc(g.year)}</h2>
+          <ul class="posts">
+            ${g.items.map(p => `
+              <li class="post">
+                <span class="post-date">${esc(p.date)}</span>
+                <a class="post-title" href="#post=${esc(p.slug)}">${esc(p.title)}</a>
+                <p class="post-desc">${esc(p.description)}</p>
+                <div class="tags">${p.tags.map(tagLink).join('')}</div>
+              </li>`).join('')}
+          </ul>
+        </section>`).join('');
+
+      app.innerHTML = `
+        <section class="hero">
+          <h1>Reverse engineering, Windows internals, security research.</h1>
+          <p>Writeups on how things actually work once you take the cover off.</p>
+        </section>
+        ${tag ? `<div class="filter-note">Showing posts tagged <strong>${esc(tag)}</strong> <a href="#">Show all</a></div>` : ''}
+        ${list || '<div class="status-msg">No posts with this tag. <a href="#">Show all posts</a></div>'}
+      `;
+    }
+
+    /* ---------- Mermaid (lazy-loaded ESM) ---------- */
+    let mermaidPromise = null;
+
+    function getMermaid() {
+      if (!mermaidPromise) {
+        mermaidPromise = import('https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs')
+          .then(mod => {
+            const mermaid = mod.default;
+            mermaid.initialize({
+              startOnLoad: false,
+              theme: 'dark',
+              securityLevel: 'loose',
+              fontFamily: "'JetBrains Mono', ui-monospace, monospace",
+              themeVariables: {
+                darkMode: true,
+                background: '#112328',
+                primaryColor: '#183036',
+                primaryTextColor: '#f1f8f6',
+                primaryBorderColor: '#2f5159',
+                lineColor: '#7f9a9c',
+                secondaryColor: '#ffb020',
+                tertiaryColor: '#112328',
+                mainBkg: '#183036',
+                secondBkg: '#112328',
+                nodeBorder: '#2f5159',
+                clusterBkg: '#0b1a1d',
+                clusterBorder: '#2f5159',
+                edgeLabelBackground: '#112328',
+                textColor: '#cfdcdc',
+                nodeTextColor: '#cfdcdc',
+                titleColor: '#f1f8f6',
+                fontSize: '14px',
+                actorBkg: '#183036',
+                actorBorder: '#2f5159',
+                actorTextColor: '#f1f8f6',
+                actorLineColor: '#7f9a9c',
+                signalColor: '#7f9a9c',
+                signalTextColor: '#cfdcdc',
+                labelBoxBkgColor: '#183036',
+                labelBoxBorderColor: '#2f5159',
+                labelTextColor: '#cfdcdc',
+                loopTextColor: '#cfdcdc',
+                noteBkgColor: '#ffb020',
+                noteTextColor: '#0b1a1d',
+                noteBorderColor: '#ffb020'
+              },
+              flowchart: { curve: 'basis', padding: 15, useMaxWidth: true, htmlLabels: true },
+              sequence: { useMaxWidth: true },
+              er: { useMaxWidth: true },
+              gantt: { useMaxWidth: true }
+            });
+            return mermaid;
+          })
+          .catch(err => {
+            console.error('[mermaid] failed to load:', err);
+            return null;
+          });
+      }
+      return mermaidPromise;
+    }
+
+    async function renderMermaid() {
+      const pres = document.querySelectorAll('pre[data-mermaid]');
+      if (!pres.length) return;
+
+      let mermaid;
+      try {
+        mermaid = await getMermaid();
+      } catch (e) {
+        console.error('[mermaid] init error:', e);
+        return;
+      }
+      if (!mermaid) return;
+
+      let i = 0;
+      for (const pre of pres) {
+        const code = pre.querySelector('code');
+        if (!code) continue;
+        const source = code.textContent;
+
+        const div = document.createElement('div');
+        div.className = 'mermaid';
+        div.textContent = 'Rendering diagram…';
+        pre.replaceWith(div);
+
+        const copyBtn = document.createElement('button');
+        copyBtn.className = 'mermaid-copy';
+        copyBtn.type = 'button';
+        copyBtn.textContent = 'Copy source';
+        copyBtn.addEventListener('click', async () => {
+          try {
+            await navigator.clipboard.writeText(source);
+            copyBtn.textContent = 'Copied';
+          } catch (e) {
+            copyBtn.textContent = 'Failed';
+          }
+          setTimeout(() => (copyBtn.textContent = 'Copy source'), 1500);
+        });
+
+        try {
+          const id = `mermaid-d${Date.now()}-${i++}`;
+          const { svg } = await mermaid.render(id, source);
+          div.innerHTML = svg;
+          div.classList.add('mermaid-rendered');
+        } catch (err) {
+          div.className = 'mermaid mermaid-error';
+          div.textContent = 'Diagram error: ' + (err && err.message ? err.message : 'could not render');
+        }
+        div.appendChild(copyBtn);
+      }
+    }
+
+    /* ---------- Code blocks & Tables ---------- */
+    function enhanceCode() {
+      document.querySelectorAll('.md-content pre').forEach(pre => {
+        const code = pre.querySelector('code');
+        if (!code) return;
+
+        // Mermaid bloklarını atla
+        if (
+          code.classList.contains('language-mermaid') ||
+          code.classList.contains('mermaid') ||
+          code.dataset.lang === 'mermaid'
+        ) {
+          pre.dataset.mermaid = 'true';
+          return;
+        }
+
+        hljs.highlightElement(code);
+
+        const lang = (code.className.match(/language-([\w+-]+)/) || [, 'text'])[1];
+        const wrap = document.createElement('div');
+        wrap.className = 'codeblock';
+        wrap.innerHTML = `<div class="code-bar"><span>${esc(lang)}</span><button class="copy-btn" type="button">Copy</button></div>`;
+        pre.replaceWith(wrap);
+        wrap.appendChild(pre);
+
+        const btn = wrap.querySelector('.copy-btn');
+        btn.addEventListener('click', async () => {
+          try {
+            await navigator.clipboard.writeText(code.innerText);
+            btn.textContent = 'Copied';
+          } catch (e) {
+            btn.textContent = 'Failed';
+          }
+          setTimeout(() => (btn.textContent = 'Copy'), 1500);
+        });
+      });
+
+      // Tabloları yatay kaydırma için sarmalayıcıya al
+      document.querySelectorAll('.md-content table').forEach(table => {
+        if (!table.parentElement.classList.contains('table-wrapper')) {
+          const wrapper = document.createElement('div');
+          wrapper.className = 'table-wrapper';
+          table.parentNode.insertBefore(wrapper, table);
+          wrapper.appendChild(table);
+        }
+      });
+    }
+
+    async function renderPost(slug, targetSection) {
+      const posts = await loadIndex();
+      const meta = posts.find(p => p.slug === slug);
+
+      if (!meta) {
+        currentPostSlug = null;
+        app.innerHTML = `<div class="status-msg">Post not found. <a href="#">Back to all posts</a></div>`;
+        return;
+      }
+
+      currentPostSlug = slug;
+      document.title = `${meta.title} | est1mate`;
+
+      try {
+        const res = await fetch(`posts/${slug}.md`);
+        if (!res.ok) throw new Error('Not found');
+        const md = await res.text();
+        const html = marked.parse(md);
+        const minutes = Math.max(1, Math.round(md.split(/\s+/).length / 220));
+
+        app.innerHTML = `
+          <article class="article">
+            <a href="#" class="back-btn">&larr; All posts</a>
+            <header class="article-header">
+              <h1>${esc(meta.title)}</h1>
+              <div class="article-meta">
+                <span>${esc(meta.date)}</span>
+                <span>${minutes} min read</span>
+                ${meta.tags.map(tagLink).join('')}
+              </div>
+            </header>
+            <div class="md-content">${html}</div>
+          </article>
+        `;
+
+        enhanceHeadings();
+        enhanceTOC();
+        enhanceLinks();
+        enhanceCode();
+        await renderMermaid();
+
+        if (targetSection) {
+          const target = document.getElementById(targetSection);
+          if (target) {
+            target.scrollIntoView({ behavior: 'smooth' });
+          } else {
+            window.scrollTo(0, 0);
+          }
+        } else {
+          window.scrollTo(0, 0);
+        }
+
+        progress.style.opacity = 1;
+        updateProgress();
+      } catch (err) {
+        currentPostSlug = null;
+        app.innerHTML = `<div class="status-msg">Could not load this post. <a href="#">Back to all posts</a></div>`;
+      }
+    }
+
+    function updateProgress() {
+      const max = document.documentElement.scrollHeight - window.innerHeight;
+      progress.style.transform = `scaleX(${max > 0 ? Math.min(1, window.scrollY / max) : 0})`;
+    }
+
+    function parsePostRoute(hash) {
+      const raw = hash.slice(6); // remove '#post='
+      let slug = raw;
+      let section = null;
+
+      if (slug.includes('&section=')) {
+        const parts = slug.split('&section=');
+        slug = parts[0];
+        section = parts[1];
+      } else if (slug.includes('&heading=')) {
+        const parts = slug.split('&heading=');
+        slug = parts[0];
+        section = parts[1];
+      } else if (slug.includes('&id=')) {
+        const parts = slug.split('&id=');
+        slug = parts[0];
+        section = parts[1];
+      } else if (slug.includes('#')) {
+        const parts = slug.split('#');
+        slug = parts[0];
+        section = parts[1];
+      }
+
+      return {
+        slug: decodeURIComponent(slug).trim(),
+        section: section ? decodeURIComponent(section).trim() : null
+      };
+    }
+
+    async function router() {
+      const hash = window.location.hash;
+
+      if (hash.startsWith('#post=')) {
+        const { slug, section } = parsePostRoute(hash);
+        if (currentPostSlug === slug) {
+          if (section) {
+            const target = document.getElementById(section);
+            if (target) {
+              target.scrollIntoView({ behavior: 'smooth' });
+            }
+          } else {
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+          }
+        } else {
+          await renderPost(slug, section);
+        }
+      } else if (hash.startsWith('#tag=')) {
+        currentPostSlug = null;
+        renderHome(decodeURIComponent(hash.slice(5)).trim());
+        window.scrollTo(0, 0);
+      } else if (currentPostSlug && hash.length > 1 && !hash.startsWith('#tag=')) {
+        const potentialId = decodeURIComponent(hash.slice(1));
+        const target = document.getElementById(potentialId);
+        if (target) {
+          target.scrollIntoView({ behavior: 'smooth' });
+          history.replaceState(null, '', `#post=${encodeURIComponent(currentPostSlug)}&section=${encodeURIComponent(potentialId)}`);
+          return;
+        }
+        currentPostSlug = null;
+        renderHome();
+      } else {
+        currentPostSlug = null;
+        renderHome();
+      }
+    }
+
+    document.addEventListener('click', e => {
+      const a = e.target.closest('a');
+      if (!a) return;
+
+      const href = a.getAttribute('href');
+      if (!href) return;
+
+      if (href.startsWith('#') && href !== '#' && !href.startsWith('#post=') && !href.startsWith('#tag=')) {
+        const targetId = decodeURIComponent(href.slice(1));
+        const target = document.getElementById(targetId);
+        if (target) {
+          e.preventDefault();
+          target.scrollIntoView({ behavior: 'smooth' });
+          if (currentPostSlug) {
+            history.pushState(null, '', `#post=${encodeURIComponent(currentPostSlug)}&section=${encodeURIComponent(targetId)}`);
+          }
+        }
+      }
+    });
+
+    window.addEventListener('scroll', updateProgress, { passive: true });
+    window.addEventListener('hashchange', router);
+    window.addEventListener('DOMContentLoaded', router);
+  </script>
+</body>
+</html>
